@@ -1,0 +1,50 @@
+name:                esqueleto-textsearch
+version:             0.1.0.0
+synopsis:            PostgreSQL full text search for Esqueleto
+description:         PostgreSQL text search functions for Esqueleto.
+homepage:            https://github.com/albertov/esqueleto-textsearch
+license:             MIT
+license-file:        LICENSE
+author:              Alberto Valverde González
+maintainer:          alberto@toscat.net
+copyright:           2015 Alberto Valverde González
+category:            Database
+build-type:          Simple
+extra-source-files:  README.md
+cabal-version:       >=1.10
+
+library
+  exposed-modules:     Database.Esqueleto.TextSearch
+                     , Database.Esqueleto.TextSearch.Language
+                     , Database.Esqueleto.TextSearch.Sql
+                     , Database.Esqueleto.TextSearch.Types
+  -- other-modules:       
+  build-depends:       base                  >=4.7   && <5
+                     , esqueleto             >=2.1   && <2.2
+                     , persistent            >=2.1   && <2.2
+                     , persistent-postgresql >=2.1.4 && <2.2
+                     , text                  >= 1.2  && <1.3
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+  ghc-options:         -Wall -fwarn-incomplete-uni-patterns
+
+test-suite spec
+  type:                exitcode-stdio-1.0
+  ghc-options:         -Wall -fwarn-incomplete-uni-patterns
+  hs-source-dirs:      test
+  main-is:             Spec.hs
+  build-depends:       base
+                     , esqueleto
+                     , esqueleto-textsearch
+                     , persistent
+                     , transformers
+                     , resourcet
+                     , text
+                     , HUnit
+                     , QuickCheck
+                     , hspec
+                     , persistent-postgresql
+                     , persistent-template
+                     , monad-control
+                     , monad-logger
+  default-language:    Haskell2010
