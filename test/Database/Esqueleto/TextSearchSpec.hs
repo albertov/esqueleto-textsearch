@@ -59,8 +59,8 @@ to_etsvector = to_tsvector (val "english")
 
 spec :: Spec
 spec = do
-  describe "TsVector column" $ do
-    it "can set it" $ run $ do
+  describe "TsVector" $ do
+    it "can be persisted and retrieved" $ run $ do
       let article = Article "some title" "some content" Nothing
       arId <- insert article
       update  $ \a -> do
@@ -68,7 +68,7 @@ spec = do
       Just ret <- get arId
       liftIO $ isJust (articleTextsearch ret) `shouldBe` True
 
-    it "can set it with weight" $ run $ do
+    it "can be persisted and retrieved with weight" $ run $ do
       let article = Article "some title" "some content" Nothing
       arId <- insert article
       update  $ \a -> do
@@ -79,22 +79,39 @@ spec = do
       Just ret <- get arId
       liftIO $ isJust (articleTextsearch ret) `shouldBe` True
 
-  describe "Weight column" $ do
-    it "can de/serialize it" $ run $ do
+  describe "Weight" $ do
+    it "can be persisted and retrieved" $ run $ do
       forM_ [Low, Medium, High, Highest] $ \w -> do
         let m = WeightModel w
         wId <- insert m
         ret <- get wId
         liftIO $ ret `shouldBe` Just m
 
-  describe "RegConfig column" $ do
-    it "can de/serialize it" $ run $ do
+  describe "RegConfig" $ do
+    it "can be persisted and retrieved" $ run $ do
       forM_ ["english", "spanish"] $ \c -> do
         let m = RegConfigModel c
         wId <- insert m
         ret <- get wId
         liftIO $ ret `shouldBe` Just m
       
+
+  describe "TsQuery" $ do
+    describe "queryToText" $ do
+      it "can serialize infix lexeme" $
+        queryToText (Lexeme Infix [] "foo") `shouldBe` "'foo'"
+      it "can serialize infix lexeme with weights" $
+        queryToText (Lexeme Infix [Highest,Low] "foo") `shouldBe` "'foo':AD"
+      it "can serialize prefix lexeme" $
+        queryToText (Lexeme Prefix [] "foo") `shouldBe` "'foo':*"
+      it "can serialize prefix lexeme with weights" $
+        queryToText (Lexeme Prefix [Highest,Low] "foo") `shouldBe` "'foo':*AD"
+      it "can serialize AND" $
+        queryToText ("foo" :& "bar" :& "car") `shouldBe` "'foo'&('bar'&'car')"
+      it "can serialize OR" $
+        queryToText ("foo" :| "bar") `shouldBe` "'foo'|'bar'"
+      it "can serialize Not" $
+        queryToText (Not "bar") `shouldBe` "!'bar'"
 
 type RunDbMonad m
   = (MonadBaseControl IO m, MonadIO m, MonadLogger m, MonadThrow m)

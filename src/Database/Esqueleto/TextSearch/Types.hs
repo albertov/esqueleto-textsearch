@@ -13,6 +13,7 @@ module Database.Esqueleto.TextSearch.Types (
   , NormalizationOption
   , Weight (..)
   , Position (..)
+  , word
   , queryToText
 ) where
 
@@ -80,6 +81,14 @@ data TsQuery (a :: QueryType) where
 infixr 3 :&
 infixr 3 :|
 
+
+word :: Text -> TsQuery Words
+word = Word Infix []
+
+instance a ~ Words => IsString (TsQuery a) where
+  fromString = word . fromString
+
+
 deriving instance Show (TsQuery a)
 
 queryToText :: TsQuery a -> Text
@@ -89,9 +98,9 @@ queryToText = toStrict . toLazyText . build . unsafeAsLexeme
     build (Lexeme Infix [] s)    = "'" <> fromText s <> "'"
     build (Lexeme Infix ws s)    = "'" <> fromText s <> "':"  <> buildWeights ws
     build (Lexeme Prefix ws s)   = "'" <> fromText s <> "':*" <> buildWeights ws
-    build (a :& b)               = parens (build a) <> "&" <> parens (build b)
-    build (a :| b)               = parens (build a) <> "|" <> parens (build b)
-    build (Not q)                = "!" <> parens (build q)
+    build (a :& b)               = parens a <> "&" <> parens b
+    build (a :| b)               = parens a <> "|" <> parens b
+    build (Not q)                = "!" <> parens q
     buildWeights                 = fromText . fromString . map weightToChar
     unsafeAsLexeme :: TsQuery a -> TsQuery Lexemes
     unsafeAsLexeme q@Lexeme{}    = q
@@ -99,7 +108,8 @@ queryToText = toStrict . toLazyText . build . unsafeAsLexeme
     unsafeAsLexeme (a :& b)      = unsafeAsLexeme a :& unsafeAsLexeme b
     unsafeAsLexeme (a :| b)      = unsafeAsLexeme a :| unsafeAsLexeme b
     unsafeAsLexeme (Not q)       = Not (unsafeAsLexeme q)
-    parens a                     = "(" <> a <> ")"
+    parens a@Lexeme{}            = build a
+    parens a                     = "(" <> build a <> ")"
 
 newtype TsVector = TsVector {unTsVector::Text} deriving (Eq, Show, IsString)
 
