@@ -1,12 +1,16 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 module Database.Esqueleto.TextSearch.Language (
     TextSearch (..)
 ) where
 
-import Database.Esqueleto
-import Database.Esqueleto.TextSearch.Types
 import Data.String (IsString)
 import Data.Text (Text)
+
+import Database.Esqueleto (Esqueleto, SqlQuery, SqlExpr, SqlBackend, Value)
+import Database.Esqueleto.Internal.Sql (unsafeSqlFunction)
+
+import Database.Esqueleto.TextSearch.Types
 
 class Esqueleto query expr backend => TextSearch query expr backend where
 
@@ -36,3 +40,7 @@ class Esqueleto query expr backend => TextSearch query expr backend where
 
   setweight
     :: expr (Value TsVector) -> expr (Value Weight) -> expr (Value TsVector)
+
+instance TextSearch SqlQuery SqlExpr SqlBackend where
+  to_tsvector a b = unsafeSqlFunction "to_tsvector" (a, b)
+  setweight a b = unsafeSqlFunction "setweight" (a, b)

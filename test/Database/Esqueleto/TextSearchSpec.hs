@@ -10,6 +10,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Database.Esqueleto.TextSearchSpec (main, spec) where
 
+import Control.Monad (forM_)
 import Data.Maybe (isJust)
 import Data.Text (Text)
 
@@ -19,7 +20,7 @@ import Control.Monad.Trans.Resource (
   MonadBaseControl, MonadThrow, ResourceT, runResourceT)
 import Database.Esqueleto (
     SqlExpr, Value, update, set, val, just, (=.), (^.))
-import Database.Persist (insert_, insert, get)
+import Database.Persist (insert, get)
 import Database.Persist.Postgresql (
     SqlPersistT, ConnectionString, runSqlConn, transactionUndo
   , withPostgresqlConn, runMigration)
@@ -42,6 +43,10 @@ share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistUpperCase|
 
   WeightModel
     weight     Weight
+    deriving Eq Show
+
+  RegConfigModel
+    config     RegConfig
     deriving Eq Show
 |]
 
@@ -69,17 +74,26 @@ spec = do
       update  $ \a -> do
         set a [  ArticleTextsearch
               =. just (setweight (to_etsvector (a^.ArticleContent))
-                                 (val Hightest))
+                                 (val Highest))
               ]
       Just ret <- get arId
       liftIO $ isJust (articleTextsearch ret) `shouldBe` True
 
   describe "Weight column" $ do
-    it "can set it with weight from table" $ run $ do
-      let m = WeightModel High
-      wId <- insert m
-      ret <- get wId
-      liftIO $ ret `shouldBe` Just m
+    it "can de/serialize it" $ run $ do
+      forM_ [Low, Medium, High, Highest] $ \w -> do
+        let m = WeightModel w
+        wId <- insert m
+        ret <- get wId
+        liftIO $ ret `shouldBe` Just m
+
+  describe "RegConfig column" $ do
+    it "can de/serialize it" $ run $ do
+      forM_ ["english", "spanish"] $ \c -> do
+        let m = RegConfigModel c
+        wId <- insert m
+        ret <- get wId
+        liftIO $ ret `shouldBe` Just m
       
 
 type RunDbMonad m

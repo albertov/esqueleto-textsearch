@@ -4,5 +4,4 @@ module Database.Esqueleto.TextSearch (
 ) where
 
 import Database.Esqueleto.TextSearch.Language
-import Database.Esqueleto.TextSearch.Sql
 import Database.Esqueleto.TextSearch.Types

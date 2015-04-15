@@ -12,15 +12,21 @@ module Database.Esqueleto.TextSearch.Types (
   , RegConfig
   , NormalizationOption
   , Weight (..)
+  , Position (..)
+  , queryToText
 ) where
 
 import Data.Monoid ((<>))
 import Data.String (IsString(fromString))
+
 import Data.Text (Text, singleton)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
-
+import Data.Text.Lazy (toStrict)
+import Data.Text.Lazy.Builder (Builder, toLazyText, fromText)
 import Database.Persist
 import Database.Persist.Postgresql
+
+import Prelude -- Avoid base >= 4.8 warnings
 
 data NormalizationOption
   = NormNone
@@ -33,21 +39,21 @@ data NormalizationOption
   deriving (Eq, Show)
 
 data Weight
-  = Hightest
+  = Highest
   | High
   | Medium
   | Low
   deriving (Eq, Show)
 
 weightToChar :: Weight -> Char
-weightToChar Hightest = 'A'
-weightToChar High     = 'B'
-weightToChar Medium   = 'C'
-weightToChar Low      = 'D'
+weightToChar Highest = 'A'
+weightToChar High    = 'B'
+weightToChar Medium  = 'C'
+weightToChar Low     = 'D'
 
 instance PersistField Weight where
   toPersistValue = PersistText . singleton . weightToChar
-  fromPersistValue (PersistText "A") = Right Hightest
+  fromPersistValue (PersistText "A") = Right Highest
   fromPersistValue (PersistText "B") = Right High
   fromPersistValue (PersistText "C") = Right Medium
   fromPersistValue (PersistText "D") = Right Low
@@ -62,24 +68,47 @@ data QueryType = Words | Lexemes
 type Lexemes = 'Lexemes
 type Words = 'Words
 
+data Position = Prefix | Infix deriving Show
+
 data TsQuery (a :: QueryType) where
-  Lexeme :: Text -> TsQuery Lexemes
-  Word   :: Text -> TsQuery Words
-  Raw    :: Text -> TsQuery Lexemes
+  Lexeme :: Position -> [Weight] -> Text -> TsQuery Lexemes
+  Word   :: Position -> [Weight] -> Text -> TsQuery Words
   (:&)   :: TsQuery a -> TsQuery a -> TsQuery a
   (:|)   :: TsQuery a -> TsQuery a -> TsQuery a
   Not    :: TsQuery a -> TsQuery a
 
+infixr 3 :&
+infixr 3 :|
+
 deriving instance Show (TsQuery a)
 
-newtype TsVector = TsVector {unTsVector::Text} deriving (Eq, Show, IsString)
+queryToText :: TsQuery a -> Text
+queryToText = toStrict . toLazyText . build . unsafeAsLexeme
+  where
+    build :: TsQuery Lexemes -> Builder
+    build (Lexeme Infix [] s)    = "'" <> fromText s <> "'"
+    build (Lexeme Infix ws s)    = "'" <> fromText s <> "':"  <> buildWeights ws
+    build (Lexeme Prefix ws s)   = "'" <> fromText s <> "':*" <> buildWeights ws
+    build (a :& b)               = parens (build a) <> "&" <> parens (build b)
+    build (a :| b)               = parens (build a) <> "|" <> parens (build b)
+    build (Not q)                = "!" <> parens (build q)
+    buildWeights                 = fromText . fromString . map weightToChar
+    unsafeAsLexeme :: TsQuery a -> TsQuery Lexemes
+    unsafeAsLexeme q@Lexeme{}    = q
+    unsafeAsLexeme (Word p ws s) = Lexeme p ws s
+    unsafeAsLexeme (a :& b)      = unsafeAsLexeme a :& unsafeAsLexeme b
+    unsafeAsLexeme (a :| b)      = unsafeAsLexeme a :| unsafeAsLexeme b
+    unsafeAsLexeme (Not q)       = Not (unsafeAsLexeme q)
+    parens a                     = "(" <> a <> ")"
 
+newtype TsVector = TsVector {unTsVector::Text} deriving (Eq, Show, IsString)
 
 instance PersistField TsVector where
   toPersistValue = PersistDbSpecific . encodeUtf8 . unTsVector
   fromPersistValue (PersistDbSpecific bs) = Right $ TsVector $ decodeUtf8 bs
   fromPersistValue f
     = Left $ "TextSearch/TsVector: Unexpected Persist field: " <> tShow f
+
 instance PersistFieldSql TsVector where
   sqlType = const (SqlOther "tsvector")
 
@@ -91,6 +120,7 @@ instance PersistField RegConfig where
   fromPersistValue (PersistDbSpecific bs) = Right $ RegConfig $ decodeUtf8 bs
   fromPersistValue f
     = Left $ "TextSearch/RegConfig: Unexpected Persist field: " <> tShow f
+
 instance PersistFieldSql RegConfig where
   sqlType = const (SqlOther "regconfig")
 
