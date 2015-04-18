@@ -48,4 +48,6 @@ instance TextSearch SqlQuery SqlExpr SqlBackend where
   to_tsvector      a b = unsafeSqlFunction "to_tsvector"      (a, b)
   to_tsquery       a b = unsafeSqlFunction "to_tsquery"       (a, b)
   plainto_tsquery  a b = unsafeSqlFunction "plainto_tsquery"  (a, b)
+  ts_rank      a b c d = unsafeSqlFunction "ts_rank"          (a, b, c, d)
+  ts_rank_cd   a b c d = unsafeSqlFunction "ts_rank_cd"       (a, b, c, d)
   setweight        a b = unsafeSqlFunction "setweight"        (a, b)

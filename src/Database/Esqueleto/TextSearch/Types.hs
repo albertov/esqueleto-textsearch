@@ -12,7 +12,7 @@ module Database.Esqueleto.TextSearch.Types (
   , Lexemes
   , TsVector
   , RegConfig
-  , NormalizationOption
+  , NormalizationOption (..)
   , Weight (..)
   , Weights (..)
   , Position (..)
@@ -23,6 +23,9 @@ module Database.Esqueleto.TextSearch.Types (
 ) where
 
 import Control.Applicative (pure, many, optional, (<$>), (*>), (<*), (<|>))
+import Data.Bits ((.|.), (.&.))
+import Data.Int (Int64)
+import Data.List (foldl')
 import Data.Monoid ((<>))
 import Data.String (IsString(fromString))
 import Text.Printf (printf)
@@ -46,7 +49,24 @@ data NormalizationOption
   | NormUniqueWords
   | Norm1LogUniqueWords
   | Norm1Self
-  deriving (Eq, Show)
+  deriving (Eq, Show, Enum, Bounded)
+
+normToInt :: NormalizationOption -> Int64
+normToInt n
+  | fromEnum n == 0 = 0
+  | otherwise       = 2 ^ (fromEnum n - 1)
+
+instance PersistField [NormalizationOption] where
+  toPersistValue = PersistInt64 . foldl' (.|.) 0 . map normToInt
+  fromPersistValue (PersistInt64 n) = Right $ foldl' go [] [minBound..maxBound]
+    where go acc v = case normToInt v .&. n of
+                      0 -> acc
+                      _ -> v:acc
+  fromPersistValue f
+    = Left $
+      "TextSearch/[NormalizationOption]: Unexpected Persist field: " <> tShow f
+instance PersistFieldSql [NormalizationOption] where
+  sqlType = const SqlInt32
 
 data Weight
   = Highest

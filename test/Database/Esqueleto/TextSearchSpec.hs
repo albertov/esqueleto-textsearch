@@ -6,9 +6,11 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Database.Esqueleto.TextSearchSpec (main, spec) where
 
 import Control.Monad (forM_)
@@ -19,15 +21,17 @@ import Control.Monad.Logger (MonadLogger(..), runStderrLoggingT)
 import Control.Monad.Trans.Resource (
   MonadBaseControl, MonadThrow, ResourceT, runResourceT)
 import Database.Esqueleto (
-    SqlExpr, Value(..), update, select, set, val, from, where_, (=.), (^.))
-import Database.Persist (entityKey, insert, get)
+    SqlExpr, Value(..), unValue, update, select, set, val, from, where_
+  , (=.), (^.))
+import Database.Persist (entityKey, insert, get, PersistField(..))
 import Database.Persist.Postgresql (
     SqlPersistT, ConnectionString, runSqlConn, transactionUndo
   , withPostgresqlConn, runMigration)
 import Database.Persist.TH (
   mkPersist, mkMigrate, persistUpperCase, share, sqlSettings)
 import Test.Hspec (Spec, hspec, describe, it, shouldBe)
-import Test.QuickCheck (Arbitrary(..), property, oneof, listOf, listOf1, choose)
+import Test.QuickCheck (
+    Arbitrary(..), property, elements, oneof, listOf, listOf1, choose)
 
 import Database.Esqueleto.TextSearch
 
@@ -152,6 +156,7 @@ spec = do
           textToQuery "'foo'" `shouldBe` Right (lexm "foo")
         it "can parse it surrounded by spaces" $
           textToQuery " 'foo' " `shouldBe` Right (lexm "foo")
+
       describe "infix lexeme with weights" $ do
         it "can parse it" $
           textToQuery "'foo':AB"
@@ -159,11 +164,13 @@ spec = do
         it "can parse it surrounded by spaces" $
           textToQuery " 'foo':AB "
             `shouldBe` Right (Lexeme Infix [Highest,High] "foo")
+
       describe "prefix lexeme" $ do
         it "can parse it" $
           textToQuery "'foo':*" `shouldBe` Right (Lexeme Prefix [] "foo")
         it "can parse it surrounded byb spaces" $
           textToQuery " 'foo':* " `shouldBe` Right (Lexeme Prefix [] "foo")
+
       describe "prefix lexeme with weights" $ do
         it "can parse it" $
           textToQuery "'foo':*AB" `shouldBe`
@@ -171,6 +178,7 @@ spec = do
         it "can parse it surrounded by spaces" $
           textToQuery " 'foo':*AB " `shouldBe`
             Right (Lexeme Prefix [Highest,High] "foo")
+
       describe "&" $ do
         it "can parse it" $
           textToQuery "'foo'&'bar'" `shouldBe`
@@ -187,21 +195,25 @@ spec = do
         it "can parse several" $
           textToQuery "'foo'&'bar'&'car'" `shouldBe`
             Right (lexm "foo" :& lexm "bar" :& lexm "car")
+
       describe "|" $ do
         it "can parse it" $
           textToQuery "'foo'|'bar'" `shouldBe` Right (lexm "foo" :| lexm "bar")
         it "can parse several" $
           textToQuery "'foo'|'bar'|'car'" `shouldBe`
             Right (lexm "foo" :| lexm "bar" :| lexm "car")
+
       describe "mixed |s and &s" $ do
         it "respects precedence" $ do
           textToQuery "'foo'|'bar'&'car'" `shouldBe`
             Right (lexm "foo" :| lexm "bar" :& lexm "car")
           textToQuery "'foo'&'bar'|'car'" `shouldBe`
             Right (lexm "foo" :& lexm "bar" :| lexm "car")
+
       describe "!" $ do
         it "can parse it" $
           textToQuery "!'foo'" `shouldBe` Right (Not (lexm "foo"))
+
       describe "! and &" $ do
         it "can parse it" $ do
           textToQuery "!'foo'&'car'" `shouldBe`
@@ -236,6 +248,39 @@ spec = do
         where_ $ (a^. ArticleTextsearch) @@. query2
         return a
       liftIO $ length result2 `shouldBe` 0
+
+  describe "ts_rank_cd" $ do
+    it "works as expected" $ run $ do
+      let vector  = to_tsvector (val "english") (val content)
+          content = "content" :: Text
+          query   = to_tsquery (val "english") (val "content")
+          norm    = val []
+      ret <- select $ return $ ts_rank_cd (val def) vector query norm
+      liftIO $ map unValue ret `shouldBe` [0.1]
+
+  describe "ts_rank" $ do
+    it "works as expected" $ run $ do
+      let vector  = to_tsvector (val "english") (val content)
+          content = "content" :: Text
+          query   = to_tsquery (val "english") (val "content")
+          norm    = val []
+      ret <- select $ return $ ts_rank (val def) vector query norm
+      liftIO $ map unValue ret `shouldBe` [6.07927e-2]
+
+  describe "NormalizationOption" $ do
+    describe "fromPersistValue . toPersistValue" $ do
+      let isEqual [] []         = True
+          isEqual [NormNone] [] = True
+          isEqual [] [NormNone] = True
+          isEqual a  b          = a == b
+          toRight (Right a)     = a
+          toRight _             = error "unexpected Left"
+      it "is isomorphism" $ property $ \(q :: [NormalizationOption]) ->
+        isEqual ((toRight . fromPersistValue . toPersistValue) q) q
+          `shouldBe` True
+
+instance Arbitrary ([NormalizationOption]) where
+  arbitrary = (:[]) <$> elements [minBound..maxBound]
 
 instance a ~ Lexemes => Arbitrary (TsQuery a) where
   arbitrary = query 0
