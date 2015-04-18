@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -11,7 +12,6 @@
 module Database.Esqueleto.TextSearchSpec (main, spec) where
 
 import Control.Monad (forM_)
-import Data.Maybe (isJust)
 import Data.Text (Text, pack)
 
 import Control.Monad.IO.Class (MonadIO(liftIO))
@@ -19,8 +19,8 @@ import Control.Monad.Logger (MonadLogger(..), runStderrLoggingT)
 import Control.Monad.Trans.Resource (
   MonadBaseControl, MonadThrow, ResourceT, runResourceT)
 import Database.Esqueleto (
-    SqlExpr, Value, update, set, val, just, (=.), (^.))
-import Database.Persist (insert, get)
+    SqlExpr, Value(..), update, select, set, val, from, where_, (=.), (^.))
+import Database.Persist (entityKey, insert, get)
 import Database.Persist.Postgresql (
     SqlPersistT, ConnectionString, runSqlConn, transactionUndo
   , withPostgresqlConn, runMigration)
@@ -39,7 +39,11 @@ share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistUpperCase|
   Article
     title      Text
     content    Text
-    textsearch TsVector Maybe
+    textsearch TsVector
+    deriving Eq Show
+
+  WeightsModel
+    weights     Weights
     deriving Eq Show
 
   WeightModel
@@ -48,6 +52,10 @@ share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistUpperCase|
 
   RegConfigModel
     config     RegConfig
+    deriving Eq Show
+
+  QueryModel
+    query     (TsQuery Lexemes)
     deriving Eq Show
 |]
 
@@ -62,23 +70,22 @@ spec :: Spec
 spec = do
   describe "TsVector" $ do
     it "can be persisted and retrieved" $ run $ do
-      let article = Article "some title" "some content" Nothing
+      let article = Article "some title" "some content" def
       arId <- insert article
       update  $ \a -> do
-        set a [ArticleTextsearch =. just (to_etsvector (a^.ArticleContent))]
+        set a [ArticleTextsearch =. to_etsvector (a^.ArticleContent)]
       Just ret <- get arId
-      liftIO $ isJust (articleTextsearch ret) `shouldBe` True
+      liftIO $ articleTextsearch ret /= def `shouldBe` True
 
     it "can be persisted and retrieved with weight" $ run $ do
-      let article = Article "some title" "some content" Nothing
+      let article = Article "some title" "some content" def
       arId <- insert article
       update  $ \a -> do
         set a [  ArticleTextsearch
-              =. just (setweight (to_etsvector (a^.ArticleContent))
-                                 (val Highest))
+              =. setweight (to_etsvector (a^.ArticleContent)) (val Highest)
               ]
       Just ret <- get arId
-      liftIO $ isJust (articleTextsearch ret) `shouldBe` True
+      liftIO $ articleTextsearch ret /= def `shouldBe` True
 
   describe "Weight" $ do
     it "can be persisted and retrieved" $ run $ do
@@ -87,6 +94,13 @@ spec = do
         wId <- insert m
         ret <- get wId
         liftIO $ ret `shouldBe` Just m
+
+  describe "Weights" $ do
+    it "can be persisted and retrieved" $ run $ do
+      let m = WeightsModel $ Weights 0.5 0.6 0.7 0.8
+      wsId <- insert m
+      ret <- get wsId
+      liftIO $ ret `shouldBe` Just m
 
   describe "RegConfig" $ do
     it "can be persisted and retrieved" $ run $ do
@@ -98,6 +112,24 @@ spec = do
       
 
   describe "TsQuery" $ do
+    it "can be persisted and retrieved" $ run $ do
+      let qm = QueryModel (lexm "foo" :& lexm "bar")
+      qId <- insert qm
+      Just ret <- get qId
+      liftIO $ qm `shouldBe` ret
+
+    describe "to_tsquery" $ do
+      it "converts words to lexemes" $ run $ do
+        [Value lq ] <- select $ return $ 
+          to_tsquery (val "english") (val ("supernovae" :& "rats"))
+        liftIO $ lq `shouldBe` (lexm "supernova" :& lexm "rat")
+
+    describe "plainto_tsquery" $ do
+      it "converts text to lexemes" $ run $ do
+        [Value lq ] <- select $ return $ 
+          plainto_tsquery (val "english") (val "rats in supernovae")
+        liftIO $ lq `shouldBe` (lexm "rat" :& lexm "supernova")
+
     describe "queryToText" $ do
       it "can serialize infix lexeme" $
         queryToText (lexm "foo") `shouldBe` "'foo'"
@@ -186,17 +218,38 @@ spec = do
       it "is isomorphism" $ property $ \q ->
         (textToQuery . queryToText) q `shouldBe` Right q
 
+  describe "@@" $ do
+    it "works as expected" $ run $ do
+      let article = Article "some title" "some content" def
+      arId <- insert article
+      update  $ \a -> do
+        set a [ArticleTextsearch =. to_etsvector (a^.ArticleContent)]
+      let query = to_tsquery (val "english") (val "content")
+      result <- select $ from $ \a -> do
+        where_ $ (a^. ArticleTextsearch) @@. query
+        return a
+      liftIO $ do
+        length result `shouldBe` 1
+        map entityKey result `shouldBe` [arId]
+      let query2 = to_tsquery (val "english") (val "foo")
+      result2 <- select $ from $ \a -> do
+        where_ $ (a^. ArticleTextsearch) @@. query2
+        return a
+      liftIO $ length result2 `shouldBe` 0
+
 instance a ~ Lexemes => Arbitrary (TsQuery a) where
-  arbitrary = query 10
+  arbitrary = query 0
     where
+      maxDepth :: Int
+      maxDepth = 10
       query d
-        | d>0   = oneof [lexeme, and_ d, or_ d, not_ d]
-        | True  = lexeme
+        | d<maxDepth  = oneof [lexeme, and_ d, or_ d, not_ d]
+        | otherwise   = lexeme
       lexeme    = Lexeme <$> arbitrary <*> weights <*> lexString
       weights   = listOf arbitrary
-      and_ d    = (:&) <$> query (d-1) <*> query (d-1)
-      or_  d    = (:|) <$> query (d-1) <*> query (d-1)
-      not_ d    = Not <$> query (d-1)
+      and_ d    = (:&) <$> query (d+1) <*> query (d+1)
+      or_  d    = (:|) <$> query (d+1) <*> query (d+1)
+      not_ d    = Not  <$> query (d+1)
       lexString = pack <$> listOf1 (oneof $ [ choose ('a','z')
                                             , choose ('A','Z')
                                             , choose ('0','9')

@@ -5,6 +5,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 module Database.Esqueleto.TextSearch.Types (
     TsQuery (..)
   , Words
@@ -13,20 +14,23 @@ module Database.Esqueleto.TextSearch.Types (
   , RegConfig
   , NormalizationOption
   , Weight (..)
+  , Weights (..)
   , Position (..)
   , word
   , queryToText
   , textToQuery
+  , def
 ) where
 
 import Control.Applicative (pure, many, optional, (<$>), (*>), (<*), (<|>))
 import Data.Monoid ((<>))
 import Data.String (IsString(fromString))
-
+import Text.Printf (printf)
 import Text.Parsec (
   ParseError, runParser, char, eof, between, choice, spaces, satisfy, many1)
 import qualified Text.Parsec.Expr as P
 
+import Data.Default (Default(def))
 import Data.Text (Text, singleton)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.Text.Lazy (toStrict)
@@ -70,6 +74,33 @@ instance PersistField Weight where
 instance PersistFieldSql Weight where
   sqlType = const (SqlOther "char")
 
+data Weights
+  = Weights { dWeight :: !Double
+            , cWeight :: !Double
+            , bWeight :: !Double
+            , aWeight :: !Double
+            } deriving (Eq, Show)
+
+instance Default Weights where
+  def = Weights 0.1 0.2 0.4 1.0
+
+instance PersistField Weights where
+  toPersistValue (Weights d c b a)
+    --FIXME: persistent-postgresql should handle this properly
+    = PersistDbSpecific $ fromString $ (printf "{%f,%f,%f,%f}" d c b a)
+  fromPersistValue (PersistList [d, c, b, a])
+    = Weights <$> fromPersistValue d
+              <*> fromPersistValue c
+              <*> fromPersistValue b
+              <*> fromPersistValue a
+  fromPersistValue (PersistList _)
+    = Left "TextSearch/Weights: Expected a length-4 float array"
+  fromPersistValue f
+    = Left $ "TextSearch/Weights: Unexpected Persist field: " <> tShow f
+
+instance PersistFieldSql Weights where
+  sqlType = const (SqlOther "float4[4]")
+
 data QueryType = Words | Lexemes
 type Lexemes = 'Lexemes
 type Words = 'Words
@@ -89,7 +120,29 @@ infixr 2 :|
 deriving instance Show (TsQuery a)
 deriving instance Eq (TsQuery a)
 
-instance a ~ Words => IsString (TsQuery a) where
+instance PersistField (TsQuery Words) where
+  toPersistValue = PersistDbSpecific . encodeUtf8 . queryToText
+  fromPersistValue (PersistDbSpecific _)
+    = Left "TextSearch/TsQuery: Cannot parse (TsQuery Words)"
+  fromPersistValue f
+    = Left $ "TextSearch/TsQuery: Unexpected Persist field: " <> tShow f
+
+instance PersistField (TsQuery Lexemes) where
+  toPersistValue = PersistDbSpecific . encodeUtf8 . queryToText
+  fromPersistValue (PersistDbSpecific bs)
+    = case textToQuery (decodeUtf8 bs) of
+        Right q -> Right q
+        Left  e -> Left $ "Could not parse TsQuery: " <> tShow e
+  fromPersistValue f
+    = Left $ "TextSearch/TsQuery: Unexpected Persist field: " <> tShow f
+
+instance PersistFieldSql (TsQuery Words) where
+  sqlType = const (SqlOther "tsquery")
+
+instance PersistFieldSql (TsQuery Lexemes) where
+  sqlType = const (SqlOther "tsquery")
+
+instance a~Words => IsString (TsQuery a) where
   fromString = word . fromString
 
 word :: Text -> TsQuery Words
@@ -141,6 +194,9 @@ textToQuery = runParser (expr <* eof) () ""
     parens = between (char '(') (char ')')
 
 newtype TsVector = TsVector {unTsVector::Text} deriving (Eq, Show, IsString)
+
+instance Default TsVector where
+  def = TsVector ""
 
 instance PersistField TsVector where
   toPersistValue = PersistDbSpecific . encodeUtf8 . unTsVector
